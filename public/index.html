@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Status</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #f8fafc; }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #3b82f6;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="text-gray-800 font-sans p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900">System Status</h1>
+                <p class="text-sm text-gray-500 mt-1">Real-time status of API endpoints</p>
+            </div>
+            <button id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span class="hidden sm:inline">Refresh</span>
+            </button>
+        </div>
+
+        <div id="loading" class="flex justify-center items-center py-16">
+            <div class="spinner"></div>
+        </div>
+
+        <div id="error" class="hidden bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded shadow-sm" role="alert">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <p class="text-sm text-red-700" id="errorMessage"></p>
+                </div>
+            </div>
+        </div>
+
+        <div id="statusList" class="flex flex-col gap-3 hidden">
+            <!-- Items will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        const statusList = document.getElementById('statusList');
+        const loading = document.getElementById('loading');
+        const errorContainer = document.getElementById('error');
+        const errorMessage = document.getElementById('errorMessage');
+        const refreshBtn = document.getElementById('refreshBtn');
+
+        // Refresh countdown logic
+        let refreshInterval;
+        let countdownInterval;
+        let timeLeft = 30;
+
+        const updateBtnText = () => {
+            refreshBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span class="hidden sm:inline">Refresh (${timeLeft}s)</span>
+            `;
+        };
+
+        const resetTimer = () => {
+            clearInterval(countdownInterval);
+            timeLeft = 30;
+            updateBtnText();
+            countdownInterval = setInterval(() => {
+                timeLeft--;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                }
+                updateBtnText();
+            }, 1000);
+        };
+
+        const fetchStatus = async () => {
+            // Only show main loading on first load or when list is empty
+            if (statusList.innerHTML === '') {
+                loading.classList.remove('hidden');
+                statusList.classList.add('hidden');
+            }
+            errorContainer.classList.add('hidden');
+            
+            refreshBtn.disabled = true;
+            refreshBtn.classList.add('opacity-75', 'cursor-wait');
+
+            try {
+                const response = await fetch('/api/check-status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                // Load history from local storage
+                let historyData = JSON.parse(localStorage.getItem('statusHistory')) || {};
+                const timestamp = new Date().toISOString();
+
+                statusList.innerHTML = '';
+                
+                data.forEach(item => {
+                    // Update history
+                    if (!historyData[item.name]) {
+                        historyData[item.name] = [];
+                    }
+                    historyData[item.name].push({ status: item.status, time: item.time, timestamp: timestamp });
+                    // Keep last 10 records
+                    if (historyData[item.name].length > 10) {
+                        historyData[item.name].shift();
+                    }
+
+                    const endpointHistory = historyData[item.name];
+
+                    const isOk = item.status === 'ok';
+                    const badgeClass = isOk ? 'bg-green-100 text-green-800 border-green-200' : 'bg-red-100 text-red-800 border-red-200';
+                    const dotClass = isOk ? 'bg-green-500' : 'bg-red-500';
+                    const statusText = isOk ? 'OK' : 'Error';
+
+                    const historyHtml = endpointHistory.map(h => {
+                        const hIsOk = h.status === 'ok';
+                        const hColor = hIsOk ? 'bg-green-400' : 'bg-red-400';
+                        const timeStr = new Date(h.timestamp).toLocaleTimeString();
+                        return `<div class="w-1.5 h-4 sm:w-2 sm:h-5 rounded-sm ${hColor} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${timeStr} - ${h.time} - ${h.status.toUpperCase()}"></div>`;
+                    }).join('');
+
+                    const card = document.createElement('div');
+                    card.className = `bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:px-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:shadow-md transition-shadow duration-200`;
+                    
+                    card.innerHTML = `
+                        <div class="flex items-center gap-3 w-full sm:w-auto overflow-hidden">
+                            <div class="flex items-center justify-center flex-shrink-0">
+                                <span class="relative flex h-3 w-3">
+                                  ${isOk ? '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>' : ''}
+                                  <span class="relative inline-flex rounded-full h-3 w-3 ${dotClass}"></span>
+                                </span>
+                            </div>
+                            <div class="flex flex-col overflow-hidden">
+                                <h2 class="text-sm font-semibold text-gray-700 truncate" title="${item.name}">
+                                    ${item.name}
+                                </h2>
+                                <div class="flex gap-1 mt-1.5 items-center">
+                                    <span class="text-[10px] text-gray-400 mr-1 uppercase font-semibold tracking-wider">History:</span>
+                                    ${historyHtml}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border ${badgeClass}">
+                                ${statusText}
+                            </span>
+                            <div class="flex items-center text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                ${item.time}
+                            </div>
+                        </div>
+                    `;
+                    statusList.appendChild(card);
+                });
+
+                // Save updated history to localStorage
+                localStorage.setItem('statusHistory', JSON.stringify(historyData));
+
+                statusList.classList.remove('hidden');
+            } catch (err) {
+                errorMessage.textContent = 'Failed to load system status. The server might be unreachable.';
+                errorContainer.classList.remove('hidden');
+                console.error('Error fetching status:', err);
+            } finally {
+                loading.classList.add('hidden');
+                refreshBtn.disabled = false;
+                refreshBtn.classList.remove('opacity-75', 'cursor-wait');
+                resetTimer();
+            }
+        };
+
+        refreshBtn.addEventListener('click', () => {
+            clearInterval(refreshInterval);
+            fetchStatus().then(() => {
+                refreshInterval = setInterval(fetchStatus, 30000);
+            });
+        });
+
+        // Fetch on load
+        fetchStatus().then(() => {
+            refreshInterval = setInterval(fetchStatus, 30000);
+        });
+    </script>
+</body>
+</html>
