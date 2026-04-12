@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System Status</title>
+    <title>HBC Status</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%2310b981'/%3E%3Cpath d='M30 50 L45 65 L70 35' stroke='white' stroke-width='10' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #f8fafc; }
@@ -25,7 +26,7 @@
     <div class="max-w-4xl mx-auto">
         <div class="flex justify-between items-center mb-8">
             <div>
-                <h1 class="text-2xl font-bold text-gray-900">System Status</h1>
+                <h1 class="text-2xl font-bold text-gray-900">HBC Status</h1>
                 <p class="text-sm text-gray-500 mt-1">Real-time status of API endpoints</p>
             </div>
             <button id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex items-center gap-2">
@@ -141,6 +142,10 @@
                         return `<div class="w-1.5 h-4 sm:w-2 sm:h-5 rounded-sm ${hColor} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${timeStr} - ${h.time} - ${h.status.toUpperCase()}"></div>`;
                     }).join('');
 
+                    const dbIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-1 text-gray-500 flex-shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>`;
+                    const apiIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-1 text-gray-500 flex-shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" /></svg>`;
+                    const iconHtml = item.name.includes('DB') ? dbIcon : apiIcon;
+
                     const card = document.createElement('div');
                     card.className = `bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:px-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:shadow-md transition-shadow duration-200`;
                     
@@ -153,8 +158,9 @@
                                 </span>
                             </div>
                             <div class="flex flex-col overflow-hidden">
-                                <h2 class="text-sm font-semibold text-gray-700 truncate" title="${item.name}">
-                                    ${item.name}
+                                <h2 class="text-sm font-semibold text-gray-700 truncate flex items-center" title="${item.name.toUpperCase()}">
+                                    ${iconHtml}
+                                    ${item.name.toUpperCase()}
                                 </h2>
                                 <div class="flex gap-1 mt-1.5 items-center">
                                     <span class="text-[10px] text-gray-400 mr-1 uppercase font-semibold tracking-wider">History:</span>
