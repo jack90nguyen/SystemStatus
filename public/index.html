@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HBC Status</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%2310b981'/%3E%3Cpath d='M30 50 L45 65 L70 35' stroke='white' stroke-width='10' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+    <link rel="icon" type="image/png" href="/icon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #f8fafc; }
@@ -59,6 +59,52 @@
         </div>
     </div>
 
+    <!-- Logs modal -->
+    <div id="logsModal" class="fixed inset-0 z-50 hidden">
+        <div id="modalBackdrop" class="absolute inset-0 bg-black/50"></div>
+        <div class="relative max-w-3xl mx-auto mt-10 mb-10 bg-white rounded-xl shadow-xl flex flex-col max-h-[85vh]">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <div class="min-w-0">
+                    <h3 id="modalTitle" class="text-base font-semibold text-gray-900 truncate">Logs</h3>
+                    <p id="modalSubtitle" class="text-xs text-gray-500 mt-0.5 truncate">Activity log</p>
+                </div>
+                <button id="modalClose" class="text-gray-400 hover:text-gray-600 p-1 rounded" aria-label="Close">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="px-5 py-3 border-b border-gray-100 flex flex-wrap gap-2" id="filterBar">
+                <button data-range="today" class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">Today</button>
+                <button data-range="7"     class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">7 days</button>
+                <button data-range="14"    class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">14 days</button>
+                <button data-range="30"    class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">30 days</button>
+            </div>
+
+            <div id="modalStats" class="px-5 py-3 border-b border-gray-100 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs"></div>
+
+            <div class="flex-1 overflow-y-auto px-5 py-3">
+                <div id="modalLoading" class="flex justify-center py-10 hidden">
+                    <div class="spinner"></div>
+                </div>
+                <div id="modalEmpty" class="text-center text-sm text-gray-400 py-10 hidden">No logs in this range.</div>
+                <table id="modalTable" class="w-full text-xs hidden">
+                    <thead class="text-gray-500">
+                        <tr class="text-left">
+                            <th class="py-1.5 pr-2 font-medium">Time</th>
+                            <th class="py-1.5 pr-2 font-medium">Status</th>
+                            <th class="py-1.5 pr-2 font-medium">Latency</th>
+                            <th class="py-1.5 font-medium">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalTbody"></tbody>
+                </table>
+                <p id="modalFooterNote" class="text-[11px] text-gray-400 mt-3 hidden"></p>
+            </div>
+        </div>
+    </div>
+
     <script>
         const statusList = document.getElementById('statusList');
         const loading = document.getElementById('loading');
@@ -66,10 +112,10 @@
         const errorMessage = document.getElementById('errorMessage');
         const refreshBtn = document.getElementById('refreshBtn');
 
-        // Refresh countdown logic
         let refreshInterval;
         let countdownInterval;
-        let timeLeft = 30;
+        let intervalSec = 30;
+        let timeLeft = intervalSec;
 
         const updateBtnText = () => {
             refreshBtn.innerHTML = `
@@ -82,54 +128,40 @@
 
         const resetTimer = () => {
             clearInterval(countdownInterval);
-            timeLeft = 30;
+            timeLeft = intervalSec;
             updateBtnText();
             countdownInterval = setInterval(() => {
                 timeLeft--;
-                if (timeLeft <= 0) {
-                    timeLeft = 0;
-                }
+                if (timeLeft <= 0) timeLeft = 0;
                 updateBtnText();
             }, 1000);
         };
 
         const fetchStatus = async () => {
-            // Only show main loading on first load or when list is empty
             if (statusList.innerHTML === '') {
                 loading.classList.remove('hidden');
                 statusList.classList.add('hidden');
             }
             errorContainer.classList.add('hidden');
-            
+
             refreshBtn.disabled = true;
             refreshBtn.classList.add('opacity-75', 'cursor-wait');
 
             try {
-                const response = await fetch('/api/check-status');
+                const response = await fetch('/api/status');
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                const data = await response.json();
-                
-                // Load history from local storage
-                let historyData = JSON.parse(localStorage.getItem('statusHistory')) || {};
-                const timestamp = new Date().toISOString();
+                const payload = await response.json();
+                const data = payload.items || [];
+                if (payload.interval_ms) {
+                    intervalSec = Math.max(1, Math.round(payload.interval_ms / 1000));
+                }
 
                 statusList.innerHTML = '';
-                
+
                 data.forEach(item => {
-                    // Update history
-                    if (!historyData[item.name]) {
-                        historyData[item.name] = [];
-                    }
-                    historyData[item.name].push({ status: item.status, time: item.time, timestamp: timestamp });
-                    // Keep last 10 records
-                    if (historyData[item.name].length > 10) {
-                        historyData[item.name].shift();
-                    }
-
-                    const endpointHistory = historyData[item.name];
-
+                    const endpointHistory = item.history || [];
                     const isOk = item.status === 'ok';
                     const badgeClass = isOk ? 'bg-green-100 text-green-800 border-green-200' : 'bg-red-100 text-red-800 border-red-200';
                     const dotClass = isOk ? 'bg-green-500' : 'bg-red-500';
@@ -147,7 +179,9 @@
                     const iconHtml = item.name.includes('DB') ? dbIcon : apiIcon;
 
                     const card = document.createElement('div');
-                    card.className = `bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:px-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:shadow-md transition-shadow duration-200`;
+                    card.className = `bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:px-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:shadow-md transition-shadow duration-200 cursor-pointer`;
+                    card.dataset.name = item.name;
+                    card.addEventListener('click', () => openLogsModal(item.name));
                     
                     card.innerHTML = `
                         <div class="flex items-center gap-3 w-full sm:w-auto overflow-hidden">
@@ -183,9 +217,6 @@
                     statusList.appendChild(card);
                 });
 
-                // Save updated history to localStorage
-                localStorage.setItem('statusHistory', JSON.stringify(historyData));
-
                 statusList.classList.remove('hidden');
             } catch (err) {
                 errorMessage.textContent = 'Failed to load system status. The server might be unreachable.';
@@ -199,16 +230,158 @@
             }
         };
 
-        refreshBtn.addEventListener('click', () => {
+        const scheduleNext = () => {
             clearInterval(refreshInterval);
-            fetchStatus().then(() => {
-                refreshInterval = setInterval(fetchStatus, 30000);
-            });
+            refreshInterval = setInterval(fetchStatus, intervalSec * 1000);
+        };
+
+        refreshBtn.addEventListener('click', () => {
+            fetchStatus().then(scheduleNext);
         });
 
-        // Fetch on load
-        fetchStatus().then(() => {
-            refreshInterval = setInterval(fetchStatus, 30000);
+        fetchStatus().then(scheduleNext);
+
+        // ----- Logs modal -----
+        const logsModal       = document.getElementById('logsModal');
+        const modalBackdrop   = document.getElementById('modalBackdrop');
+        const modalClose      = document.getElementById('modalClose');
+        const modalTitle      = document.getElementById('modalTitle');
+        const modalSubtitle   = document.getElementById('modalSubtitle');
+        const modalStats      = document.getElementById('modalStats');
+        const modalTable      = document.getElementById('modalTable');
+        const modalTbody      = document.getElementById('modalTbody');
+        const modalLoading    = document.getElementById('modalLoading');
+        const modalEmpty     = document.getElementById('modalEmpty');
+        const modalFooterNote = document.getElementById('modalFooterNote');
+        const filterBar       = document.getElementById('filterBar');
+
+        const LOG_PAGE_LIMIT = 500;
+        let currentEndpoint = null;
+        let currentRange = '7';
+
+        const setActiveFilter = (range) => {
+            filterBar.querySelectorAll('.filter-btn').forEach(btn => {
+                const active = btn.dataset.range === range;
+                btn.classList.toggle('bg-blue-600', active);
+                btn.classList.toggle('text-white', active);
+                btn.classList.toggle('border-blue-600', active);
+                btn.classList.toggle('text-gray-600', !active);
+            });
+        };
+
+        const rangeToFromMs = (range) => {
+            const now = Date.now();
+            if (range === 'today') {
+                const d = new Date();
+                d.setHours(0, 0, 0, 0);
+                return d.getTime();
+            }
+            const days = parseInt(range, 10);
+            return now - days * 86400_000;
+        };
+
+        const fmtPercent = (v) => v === null || v === undefined ? '–' : (v * 100).toFixed(2) + '%';
+        const fmtMs      = (v) => v === null || v === undefined ? '–' : v + 'ms';
+        const fmtTime    = (ts) => {
+            const d = new Date(ts);
+            return d.toLocaleString();
+        };
+
+        const renderStats = (stats) => {
+            modalStats.innerHTML = `
+                <div><div class="text-gray-400 uppercase tracking-wider">Checks</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${stats.total.toLocaleString()}</div></div>
+                <div><div class="text-gray-400 uppercase tracking-wider">Uptime</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${fmtPercent(stats.uptime)}</div></div>
+                <div><div class="text-gray-400 uppercase tracking-wider">Errors</div><div class="${stats.error > 0 ? 'text-red-600' : 'text-gray-900'} font-semibold text-sm mt-0.5">${stats.error.toLocaleString()}</div></div>
+                <div><div class="text-gray-400 uppercase tracking-wider">Avg</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${fmtMs(stats.avg_ms)}</div></div>
+                <div><div class="text-gray-400 uppercase tracking-wider">Max</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${fmtMs(stats.max_ms)}</div></div>
+            `;
+        };
+
+        const renderRows = (items, total) => {
+            modalTbody.innerHTML = items.map(row => {
+                const isOk = row.status === 'ok';
+                const badge = isOk
+                    ? 'bg-green-100 text-green-700 border-green-200'
+                    : 'bg-red-100 text-red-700 border-red-200';
+                const detail = row.error
+                    ? `<span class="text-red-600">${row.error}</span>`
+                    : '<span class="text-gray-400">–</span>';
+                return `
+                    <tr class="border-t border-gray-100">
+                        <td class="py-1.5 pr-2 text-gray-700 font-mono">${fmtTime(row.checked_at)}</td>
+                        <td class="py-1.5 pr-2"><span class="inline-flex px-2 py-0.5 rounded border text-[10px] font-medium ${badge}">${isOk ? 'OK' : 'ERROR'}</span></td>
+                        <td class="py-1.5 pr-2 text-gray-600 font-mono">${row.time}</td>
+                        <td class="py-1.5 text-gray-600 truncate max-w-[260px]" title="${row.error || ''}">${detail}</td>
+                    </tr>
+                `;
+            }).join('');
+            if (total > items.length) {
+                modalFooterNote.textContent = `Showing latest ${items.length.toLocaleString()} of ${total.toLocaleString()} records in this range.`;
+                modalFooterNote.classList.remove('hidden');
+            } else {
+                modalFooterNote.classList.add('hidden');
+            }
+        };
+
+        const loadLogs = async () => {
+            if (!currentEndpoint) return;
+            const from = rangeToFromMs(currentRange);
+            modalLoading.classList.remove('hidden');
+            modalTable.classList.add('hidden');
+            modalEmpty.classList.add('hidden');
+            modalFooterNote.classList.add('hidden');
+            modalStats.innerHTML = '';
+
+            try {
+                const qs = new URLSearchParams({ name: currentEndpoint, from: String(from) });
+                const [statsRes, logsRes] = await Promise.all([
+                    fetch(`/api/logs/stats?${qs.toString()}`).then(r => r.json()),
+                    fetch(`/api/logs?${qs.toString()}&limit=${LOG_PAGE_LIMIT}`).then(r => r.json()),
+                ]);
+                renderStats(statsRes);
+                if ((logsRes.items || []).length === 0) {
+                    modalEmpty.classList.remove('hidden');
+                } else {
+                    renderRows(logsRes.items, statsRes.total);
+                    modalTable.classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error('Failed to load logs:', err);
+                modalEmpty.textContent = 'Failed to load logs.';
+                modalEmpty.classList.remove('hidden');
+            } finally {
+                modalLoading.classList.add('hidden');
+            }
+        };
+
+        const openLogsModal = (name) => {
+            currentEndpoint = name;
+            currentRange = '7';
+            modalTitle.textContent = name.toUpperCase();
+            setActiveFilter(currentRange);
+            logsModal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            loadLogs();
+        };
+
+        const closeLogsModal = () => {
+            logsModal.classList.add('hidden');
+            document.body.style.overflow = '';
+            currentEndpoint = null;
+        };
+
+        modalClose.addEventListener('click', closeLogsModal);
+        modalBackdrop.addEventListener('click', closeLogsModal);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !logsModal.classList.contains('hidden')) closeLogsModal();
+        });
+
+        filterBar.addEventListener('click', (e) => {
+            const btn = e.target.closest('.filter-btn');
+            if (!btn) return;
+            currentRange = btn.dataset.range;
+            setActiveFilter(currentRange);
+            loadLogs();
         });
     </script>
 </body>
