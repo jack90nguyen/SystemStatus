@@ -1,0 +1,17 @@
+{
+  "name": "HBC Status",
+  "short_name": "HBC Status",
+  "description": "Real-time status of HBC API endpoints",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "349x350",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
