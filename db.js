@@ -64,6 +64,17 @@ function getHistory(name, limit) {
   return historyStmt.all(name, limit);
 }
 
+const historySinceStmt = db.prepare(`
+  SELECT status, time_ms, error, checked_at
+  FROM status_logs
+  WHERE name = ? AND checked_at >= ?
+  ORDER BY checked_at ASC
+`);
+
+function getHistorySince(name, sinceMs) {
+  return historySinceStmt.all(name, sinceMs);
+}
+
 function queryLogs({ name, from, to, limit = 500, offset = 0 }) {
   const clauses = [];
   const params = [];
@@ -115,6 +126,7 @@ module.exports = {
   insertLogs,
   getLatestPerName,
   getHistory,
+  getHistorySince,
   queryLogs,
   statsForRange,
   purgeOlderThan,

@@ -4,7 +4,7 @@ const path = require('path');
 const {
   insertLogs,
   getLatestPerName,
-  getHistory,
+  getHistorySince,
   queryLogs,
   statsForRange,
   purgeOlderThan,
@@ -15,7 +15,6 @@ const port = process.env.PORT || 3000;
 
 const CHECK_INTERVAL_MS = parseInt(process.env.CHECK_INTERVAL_MS, 10) || 30_000;
 const LOG_RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS, 10) || 30;
-const HISTORY_SIZE = parseInt(process.env.HISTORY_SIZE, 10) || 10;
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || 5_000;
 
 function getEndpoints() {
@@ -74,13 +73,19 @@ function startScheduler() {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+const HISTORY_WINDOW_HOURS = new Set([1, 3, 7]);
+
 app.get('/api/status', (req, res) => {
+  let hours = parseInt(req.query.window_hours, 10);
+  if (!HISTORY_WINDOW_HOURS.has(hours)) hours = 1;
+  const sinceMs = Date.now() - hours * 60 * 60 * 1000;
+
   const endpoints = getEndpoints();
   const latestMap = new Map(getLatestPerName().map(r => [r.name, r]));
 
   const data = endpoints.map(ep => {
     const latest = latestMap.get(ep.name);
-    const history = getHistory(ep.name, HISTORY_SIZE).reverse();
+    const history = getHistorySince(ep.name, sinceMs);
     return {
       name: ep.name,
       status: latest ? latest.status : 'unknown',
@@ -97,6 +102,7 @@ app.get('/api/status', (req, res) => {
   res.json({
     interval_ms: CHECK_INTERVAL_MS,
     retention_days: LOG_RETENTION_DAYS,
+    window_hours: hours,
     items: data,
   });
 });

@@ -37,6 +37,13 @@
             </button>
         </div>
 
+        <div id="windowFilter" class="flex items-center gap-2 mb-4">
+            <span class="text-xs text-gray-400 uppercase tracking-wider mr-1">History:</span>
+            <button data-hours="1" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">1h</button>
+            <button data-hours="3" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">3h</button>
+            <button data-hours="7" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">7h</button>
+        </div>
+
         <div id="loading" class="flex justify-center items-center py-16">
             <div class="spinner"></div>
         </div>
@@ -76,13 +83,21 @@
             </div>
 
             <div class="px-5 py-3 border-b border-gray-100 flex flex-wrap gap-2" id="filterBar">
-                <button data-range="today" class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">Today</button>
+                <button data-range="24h"  class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">24h</button>
                 <button data-range="7"     class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">7 days</button>
                 <button data-range="14"    class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">14 days</button>
                 <button data-range="30"    class="filter-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">30 days</button>
             </div>
 
-            <div id="modalStats" class="px-5 py-3 border-b border-gray-100 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs"></div>
+            <div id="modalStats" class="px-5 py-3 border-b border-gray-100 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs"></div>
+
+            <div id="modalChartWrap" class="px-5 py-3 border-b border-gray-100 hidden">
+                <div class="flex items-center justify-between text-[10px] text-gray-400 uppercase tracking-wider mb-1.5">
+                    <span>History</span>
+                    <span id="modalChartMeta"></span>
+                </div>
+                <div id="modalChart" class="flex items-end gap-px h-6 w-full"></div>
+            </div>
 
             <div class="flex-1 overflow-y-auto px-5 py-3">
                 <div id="modalLoading" class="flex justify-center py-10 hidden">
@@ -111,11 +126,24 @@
         const errorContainer = document.getElementById('error');
         const errorMessage = document.getElementById('errorMessage');
         const refreshBtn = document.getElementById('refreshBtn');
+        const windowFilter = document.getElementById('windowFilter');
 
         let refreshInterval;
         let countdownInterval;
         let intervalSec = 30;
         let timeLeft = intervalSec;
+        let currentWindowHours = 1;
+
+        const setActiveWindow = (hours) => {
+            windowFilter.querySelectorAll('.window-btn').forEach(btn => {
+                const active = parseInt(btn.dataset.hours, 10) === hours;
+                btn.classList.toggle('bg-blue-600', active);
+                btn.classList.toggle('text-white', active);
+                btn.classList.toggle('border-blue-600', active);
+                btn.classList.toggle('text-gray-600', !active);
+            });
+        };
+        setActiveWindow(currentWindowHours);
 
         const updateBtnText = () => {
             refreshBtn.innerHTML = `
@@ -137,6 +165,33 @@
             }, 1000);
         };
 
+        // Group a chronological history (ASC) into at most `bars` buckets.
+        // A bucket renders red if ANY check inside failed.
+        const bucketHistory = (history, bars) => {
+            const n = history.length;
+            if (n === 0) return [];
+            const size = Math.max(1, Math.ceil(n / bars));
+            const out = [];
+            for (let i = 0; i < n; i += size) {
+                const chunk = history.slice(i, i + size);
+                const errors = chunk.filter(h => h.status !== 'ok').length;
+                const hasError = errors > 0;
+                const firstTs = new Date(chunk[0].timestamp);
+                const lastTs  = new Date(chunk[chunk.length - 1].timestamp);
+                let tooltip;
+                if (chunk.length === 1) {
+                    tooltip = `${firstTs.toLocaleTimeString()} • ${chunk[0].time} • ${chunk[0].status.toUpperCase()}`;
+                } else {
+                    const range = `${firstTs.toLocaleTimeString()}–${lastTs.toLocaleTimeString()}`;
+                    tooltip = hasError
+                        ? `${range} • ${chunk.length} checks • ${errors} error${errors === 1 ? '' : 's'}`
+                        : `${range} • ${chunk.length} checks • all OK`;
+                }
+                out.push({ hasError, tooltip });
+            }
+            return out;
+        };
+
         const fetchStatus = async () => {
             if (statusList.innerHTML === '') {
                 loading.classList.remove('hidden');
@@ -148,7 +203,7 @@
             refreshBtn.classList.add('opacity-75', 'cursor-wait');
 
             try {
-                const response = await fetch('/api/status');
+                const response = await fetch(`/api/status?window_hours=${currentWindowHours}`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
@@ -167,11 +222,11 @@
                     const dotClass = isOk ? 'bg-green-500' : 'bg-red-500';
                     const statusText = isOk ? 'OK' : 'Error';
 
-                    const historyHtml = endpointHistory.map(h => {
-                        const hIsOk = h.status === 'ok';
-                        const hColor = hIsOk ? 'bg-green-400' : 'bg-red-400';
-                        const timeStr = new Date(h.timestamp).toLocaleTimeString();
-                        return `<div class="w-1.5 h-4 sm:w-2 sm:h-5 rounded-sm ${hColor} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${timeStr} - ${h.time} - ${h.status.toUpperCase()}"></div>`;
+                    const MAX_BARS = 60;
+                    const buckets = bucketHistory(endpointHistory, MAX_BARS);
+                    const historyHtml = buckets.map(b => {
+                        const hColor = b.hasError ? 'bg-red-400' : 'bg-green-400';
+                        return `<div class="w-1.5 h-4 sm:w-2 sm:h-5 rounded-sm ${hColor} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${b.tooltip}"></div>`;
                     }).join('');
 
                     const dbIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-1 text-gray-500 flex-shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>`;
@@ -239,6 +294,16 @@
             fetchStatus().then(scheduleNext);
         });
 
+        windowFilter.addEventListener('click', (e) => {
+            const btn = e.target.closest('.window-btn');
+            if (!btn) return;
+            const hours = parseInt(btn.dataset.hours, 10);
+            if (!hours || hours === currentWindowHours) return;
+            currentWindowHours = hours;
+            setActiveWindow(currentWindowHours);
+            fetchStatus().then(scheduleNext);
+        });
+
         fetchStatus().then(scheduleNext);
 
         // ----- Logs modal -----
@@ -248,6 +313,9 @@
         const modalTitle      = document.getElementById('modalTitle');
         const modalSubtitle   = document.getElementById('modalSubtitle');
         const modalStats      = document.getElementById('modalStats');
+        const modalChartWrap  = document.getElementById('modalChartWrap');
+        const modalChart      = document.getElementById('modalChart');
+        const modalChartMeta  = document.getElementById('modalChartMeta');
         const modalTable      = document.getElementById('modalTable');
         const modalTbody      = document.getElementById('modalTbody');
         const modalLoading    = document.getElementById('modalLoading');
@@ -257,7 +325,7 @@
 
         const LOG_PAGE_LIMIT = 500;
         let currentEndpoint = null;
-        let currentRange = '7';
+        let currentRange = '24h';
 
         const setActiveFilter = (range) => {
             filterBar.querySelectorAll('.filter-btn').forEach(btn => {
@@ -271,11 +339,7 @@
 
         const rangeToFromMs = (range) => {
             const now = Date.now();
-            if (range === 'today') {
-                const d = new Date();
-                d.setHours(0, 0, 0, 0);
-                return d.getTime();
-            }
+            if (range === '24h') return now - 24 * 3600_000;
             const days = parseInt(range, 10);
             return now - days * 86400_000;
         };
@@ -289,7 +353,6 @@
 
         const renderStats = (stats) => {
             modalStats.innerHTML = `
-                <div><div class="text-gray-400 uppercase tracking-wider">Checks</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${stats.total.toLocaleString()}</div></div>
                 <div><div class="text-gray-400 uppercase tracking-wider">Uptime</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${fmtPercent(stats.uptime)}</div></div>
                 <div><div class="text-gray-400 uppercase tracking-wider">Errors</div><div class="${stats.error > 0 ? 'text-red-600' : 'text-gray-900'} font-semibold text-sm mt-0.5">${stats.error.toLocaleString()}</div></div>
                 <div><div class="text-gray-400 uppercase tracking-wider">Avg</div><div class="text-gray-900 font-semibold text-sm mt-0.5">${fmtMs(stats.avg_ms)}</div></div>
@@ -323,6 +386,29 @@
             }
         };
 
+        const CHART_MAX_BARS = 120;
+        const renderChart = (items, total) => {
+            if (!items || items.length === 0) {
+                modalChartWrap.classList.add('hidden');
+                return;
+            }
+            // items come DESC; chronological = reverse, then take last N
+            const chrono = items.slice().reverse();
+            const slice = chrono.slice(-CHART_MAX_BARS);
+            modalChart.innerHTML = slice.map(row => {
+                const isOk = row.status === 'ok';
+                const color = isOk ? 'bg-green-400' : 'bg-red-400';
+                const tooltip = `${fmtTime(row.checked_at)} • ${row.time} • ${(row.status || '').toUpperCase()}`;
+                return `<div class="flex-1 min-w-[2px] h-full rounded-sm ${color} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${tooltip}"></div>`;
+            }).join('');
+            const shown = slice.length;
+            const totalLabel = total ? total.toLocaleString() : shown.toLocaleString();
+            modalChartMeta.textContent = total > shown
+                ? `Last ${shown} of ${totalLabel}`
+                : `${shown} check${shown === 1 ? '' : 's'}`;
+            modalChartWrap.classList.remove('hidden');
+        };
+
         const loadLogs = async () => {
             if (!currentEndpoint) return;
             const from = rangeToFromMs(currentRange);
@@ -331,6 +417,8 @@
             modalEmpty.classList.add('hidden');
             modalFooterNote.classList.add('hidden');
             modalStats.innerHTML = '';
+            modalChart.innerHTML = '';
+            modalChartWrap.classList.add('hidden');
 
             try {
                 const qs = new URLSearchParams({ name: currentEndpoint, from: String(from) });
@@ -339,10 +427,12 @@
                     fetch(`/api/logs?${qs.toString()}&limit=${LOG_PAGE_LIMIT}`).then(r => r.json()),
                 ]);
                 renderStats(statsRes);
-                if ((logsRes.items || []).length === 0) {
+                const items = logsRes.items || [];
+                if (items.length === 0) {
                     modalEmpty.classList.remove('hidden');
                 } else {
-                    renderRows(logsRes.items, statsRes.total);
+                    renderChart(items, statsRes.total);
+                    renderRows(items, statsRes.total);
                     modalTable.classList.remove('hidden');
                 }
             } catch (err) {
@@ -356,7 +446,7 @@
 
         const openLogsModal = (name) => {
             currentEndpoint = name;
-            currentRange = '7';
+            currentRange = '24h';
             modalTitle.textContent = name.toUpperCase();
             setActiveFilter(currentRange);
             logsModal.classList.remove('hidden');
