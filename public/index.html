@@ -49,6 +49,7 @@
             <button data-hours="1" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">1h</button>
             <button data-hours="3" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">3h</button>
             <button data-hours="7" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">7h</button>
+            <button data-hours="24" class="window-btn px-3 py-1 text-xs font-medium rounded-full border border-gray-200 hover:bg-gray-50">24h</button>
         </div>
 
         <div id="loading" class="flex justify-center items-center py-16">
@@ -114,15 +115,15 @@
                 <table id="modalTable" class="w-full text-xs hidden">
                     <thead class="text-gray-500">
                         <tr class="text-left">
-                            <th class="py-1.5 pr-2 font-medium">Time</th>
-                            <th class="py-1.5 pr-2 font-medium">Status</th>
-                            <th class="py-1.5 pr-2 font-medium">Latency</th>
-                            <th class="py-1.5 font-medium">Detail</th>
+                            <th class="py-1.5 pr-2 font-medium">Hour</th>
+                            <th class="py-1.5 pr-2 font-medium text-right">Checks</th>
+                            <th class="py-1.5 pr-2 font-medium text-right">Errors</th>
+                            <th class="py-1.5 pr-2 font-medium text-right">Uptime</th>
+                            <th class="py-1.5 font-medium text-right">Avg</th>
                         </tr>
                     </thead>
                     <tbody id="modalTbody"></tbody>
                 </table>
-                <p id="modalFooterNote" class="text-[11px] text-gray-400 mt-3 hidden"></p>
             </div>
         </div>
     </div>
@@ -331,12 +332,12 @@
         const modalTbody      = document.getElementById('modalTbody');
         const modalLoading    = document.getElementById('modalLoading');
         const modalEmpty     = document.getElementById('modalEmpty');
-        const modalFooterNote = document.getElementById('modalFooterNote');
         const filterBar       = document.getElementById('filterBar');
 
-        const LOG_PAGE_LIMIT = 500;
         let currentEndpoint = null;
         let currentRange = '24h';
+        let currentFromMs = null;
+        let currentToMs = null;
 
         const setActiveFilter = (range) => {
             filterBar.querySelectorAll('.filter-btn').forEach(btn => {
@@ -371,8 +372,55 @@
             `;
         };
 
-        const renderRows = (items, total) => {
+        const fmtHour = (ts) => {
+            const d = new Date(ts);
+            return d.toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        };
+
+        const renderHourly = (items) => {
             modalTbody.innerHTML = items.map(row => {
+                const uptime = row.total > 0 ? (row.ok / row.total) : null;
+                const uptimeStr = uptime === null ? '–' : (uptime * 100).toFixed(1) + '%';
+                const rowClass = row.has_error ? 'bg-red-50/40' : '';
+                const errorCls = row.error > 0 ? 'text-red-600 font-medium' : 'text-gray-400';
+                const uptimeCls = row.has_error ? 'text-red-600' : 'text-gray-700';
+                return `
+                    <tr class="hour-row border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${rowClass}" data-hour="${row.hour_ts}">
+                        <td class="py-1.5 pr-2 text-gray-700 font-mono">
+                            <span class="inline-block w-3 text-gray-400 caret">▸</span>
+                            ${fmtHour(row.hour_ts)}
+                        </td>
+                        <td class="py-1.5 pr-2 text-right text-gray-700 font-mono">${row.total.toLocaleString()}</td>
+                        <td class="py-1.5 pr-2 text-right font-mono ${errorCls}">${row.error.toLocaleString()}</td>
+                        <td class="py-1.5 pr-2 text-right font-mono ${uptimeCls}">${uptimeStr}</td>
+                        <td class="py-1.5 text-right text-gray-600 font-mono">${fmtMs(row.avg_ms)}</td>
+                    </tr>
+                    <tr class="hour-detail hidden" data-hour-detail="${row.hour_ts}">
+                        <td colspan="5" class="py-2 px-3 bg-gray-50 border-t border-gray-100">
+                            <div class="hour-detail-body text-[11px] text-gray-500">Loading…</div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        };
+
+        const renderHourDetail = (rows) => {
+            if (!rows || rows.length === 0) {
+                return '<div class="text-gray-400 py-2 text-center">No checks in this hour.</div>';
+            }
+            const head = `
+                <table class="w-full text-[11px]">
+                    <thead class="text-gray-400">
+                        <tr class="text-left">
+                            <th class="py-1 pr-2 font-medium">Time</th>
+                            <th class="py-1 pr-2 font-medium">Status</th>
+                            <th class="py-1 pr-2 font-medium">Latency</th>
+                            <th class="py-1 font-medium">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            const body = rows.map(row => {
                 const isOk = row.status === 'ok';
                 const badge = isOk
                     ? 'bg-green-100 text-green-700 border-green-200'
@@ -382,68 +430,69 @@
                     : '<span class="text-gray-400">–</span>';
                 return `
                     <tr class="border-t border-gray-100">
-                        <td class="py-1.5 pr-2 text-gray-700 font-mono">${fmtTime(row.checked_at)}</td>
-                        <td class="py-1.5 pr-2"><span class="inline-flex px-2 py-0.5 rounded border text-[10px] font-medium ${badge}">${isOk ? 'OK' : 'ERROR'}</span></td>
-                        <td class="py-1.5 pr-2 text-gray-600 font-mono">${row.time}</td>
-                        <td class="py-1.5 text-gray-600 truncate max-w-[260px]" title="${row.error || ''}">${detail}</td>
+                        <td class="py-1 pr-2 text-gray-700 font-mono">${fmtTime(row.checked_at)}</td>
+                        <td class="py-1 pr-2"><span class="inline-flex px-1.5 py-0.5 rounded border text-[10px] font-medium ${badge}">${isOk ? 'OK' : 'ERROR'}</span></td>
+                        <td class="py-1 pr-2 text-gray-600 font-mono">${row.time}</td>
+                        <td class="py-1 text-gray-600 truncate max-w-[260px]" title="${row.error || ''}">${detail}</td>
                     </tr>
                 `;
             }).join('');
-            if (total > items.length) {
-                modalFooterNote.textContent = `Showing latest ${items.length.toLocaleString()} of ${total.toLocaleString()} records in this range.`;
-                modalFooterNote.classList.remove('hidden');
-            } else {
-                modalFooterNote.classList.add('hidden');
-            }
+            return head + body + '</tbody></table>';
         };
 
-        const CHART_MAX_BARS = 120;
-        const renderChart = (items, total) => {
-            if (!items || items.length === 0) {
+        const renderChart = (buckets) => {
+            if (!buckets || buckets.length === 0) {
                 modalChartWrap.classList.add('hidden');
                 return;
             }
-            // items come DESC; chronological = reverse, then take last N
-            const chrono = items.slice().reverse();
-            const slice = chrono.slice(-CHART_MAX_BARS);
-            modalChart.innerHTML = slice.map(row => {
-                const isOk = row.status === 'ok';
-                const color = isOk ? 'bg-green-400' : 'bg-red-400';
-                const tooltip = `${fmtTime(row.checked_at)} • ${row.time} • ${(row.status || '').toUpperCase()}`;
+            modalChart.innerHTML = buckets.map(b => {
+                let color, tooltip;
+                if (b.total === 0) {
+                    color = 'bg-gray-200';
+                    tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • no data`;
+                } else if (b.has_error) {
+                    color = 'bg-red-400';
+                    tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • ${b.total} checks • ${b.errors} error${b.errors === 1 ? '' : 's'}`;
+                } else {
+                    color = 'bg-green-400';
+                    tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • ${b.total} checks • all OK`;
+                }
                 return `<div class="flex-1 min-w-[2px] h-full rounded-sm ${color} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${tooltip}"></div>`;
             }).join('');
-            const shown = slice.length;
-            const totalLabel = total ? total.toLocaleString() : shown.toLocaleString();
-            modalChartMeta.textContent = total > shown
-                ? `Last ${shown} of ${totalLabel}`
-                : `${shown} check${shown === 1 ? '' : 's'}`;
+            const withData = buckets.filter(b => b.total > 0).length;
+            modalChartMeta.textContent = `${buckets.length} buckets • ${withData} with data`;
             modalChartWrap.classList.remove('hidden');
         };
 
         const loadLogs = async () => {
             if (!currentEndpoint) return;
-            const from = rangeToFromMs(currentRange);
+            currentFromMs = rangeToFromMs(currentRange);
+            currentToMs = Date.now();
             modalLoading.classList.remove('hidden');
             modalTable.classList.add('hidden');
             modalEmpty.classList.add('hidden');
-            modalFooterNote.classList.add('hidden');
             modalStats.innerHTML = '';
             modalChart.innerHTML = '';
             modalChartWrap.classList.add('hidden');
 
             try {
-                const qs = new URLSearchParams({ name: currentEndpoint, from: String(from) });
-                const [statsRes, logsRes] = await Promise.all([
+                const qs = new URLSearchParams({
+                    name: currentEndpoint,
+                    from: String(currentFromMs),
+                    to:   String(currentToMs),
+                });
+                const [statsRes, bucketsRes, hourlyRes] = await Promise.all([
                     fetch(`/api/logs/stats?${qs.toString()}`).then(r => r.json()),
-                    fetch(`/api/logs?${qs.toString()}&limit=${LOG_PAGE_LIMIT}`).then(r => r.json()),
+                    fetch(`/api/logs/buckets?${qs.toString()}&buckets=120`).then(r => r.json()),
+                    fetch(`/api/logs/hourly?${qs.toString()}`).then(r => r.json()),
                 ]);
                 renderStats(statsRes);
-                const items = logsRes.items || [];
+                renderChart(bucketsRes.buckets || []);
+                const items = hourlyRes.items || [];
                 if (items.length === 0) {
                     modalEmpty.classList.remove('hidden');
                 } else {
-                    renderChart(items, statsRes.total);
-                    renderRows(items, statsRes.total);
+                    renderHourly(items);
                     modalTable.classList.remove('hidden');
                 }
             } catch (err) {
@@ -452,6 +501,39 @@
                 modalEmpty.classList.remove('hidden');
             } finally {
                 modalLoading.classList.add('hidden');
+            }
+        };
+
+        const toggleHourDetail = async (hourTs, rowEl) => {
+            const detailRow = modalTbody.querySelector(`tr[data-hour-detail="${hourTs}"]`);
+            if (!detailRow) return;
+            const caret = rowEl.querySelector('.caret');
+            const isOpen = !detailRow.classList.contains('hidden');
+            if (isOpen) {
+                detailRow.classList.add('hidden');
+                if (caret) caret.textContent = '▸';
+                return;
+            }
+            detailRow.classList.remove('hidden');
+            if (caret) caret.textContent = '▾';
+            const body = detailRow.querySelector('.hour-detail-body');
+            if (body.dataset.loaded === '1') return;
+            body.textContent = 'Loading…';
+            try {
+                const from = Number(hourTs);
+                const to = from + 3600_000 - 1;
+                const qs = new URLSearchParams({
+                    name: currentEndpoint,
+                    from: String(from),
+                    to:   String(to),
+                    limit: '5000',
+                });
+                const res = await fetch(`/api/logs?${qs.toString()}`).then(r => r.json());
+                body.innerHTML = renderHourDetail(res.items || []);
+                body.dataset.loaded = '1';
+            } catch (err) {
+                console.error('Failed to load hour detail:', err);
+                body.textContent = 'Failed to load detail.';
             }
         };
 
@@ -483,6 +565,12 @@
             currentRange = btn.dataset.range;
             setActiveFilter(currentRange);
             loadLogs();
+        });
+
+        modalTbody.addEventListener('click', (e) => {
+            const row = e.target.closest('.hour-row');
+            if (!row) return;
+            toggleHourDetail(row.dataset.hour, row);
         });
     </script>
 </body>

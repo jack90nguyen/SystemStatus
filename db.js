@@ -115,6 +115,128 @@ function statsForRange({ name, from, to }) {
   return db.prepare(sql).get(...params);
 }
 
+function bucketsForRange({ name, from, to, buckets }) {
+  if (!from || !to || to <= from) return [];
+  const n = Math.max(1, Math.min(parseInt(buckets, 10) || 120, 500));
+  const span = to - from;
+  const clauses = ['checked_at >= ?', 'checked_at <= ?'];
+  const params = [from, to];
+  if (name) { clauses.push('name = ?'); params.push(name); }
+  const sql = `
+    SELECT
+      CAST((checked_at - ?) * ? / ? AS INTEGER)         AS raw_idx,
+      COUNT(*)                                          AS total,
+      SUM(CASE WHEN status = 'ok'  THEN 1 ELSE 0 END)   AS ok_count,
+      SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END)   AS error_count,
+      AVG(time_ms)                                      AS avg_ms,
+      MAX(time_ms)                                      AS max_ms,
+      MIN(checked_at)                                   AS first_at,
+      MAX(checked_at)                                   AS last_at
+    FROM status_logs
+    WHERE ${clauses.join(' AND ')}
+    GROUP BY raw_idx
+    ORDER BY raw_idx ASC
+  `;
+  const rawRows = db.prepare(sql).all(from, n, span, ...params);
+  const rows = [];
+  const lastByIdx = new Map();
+  for (const r of rawRows) {
+    const idx = Math.min(n - 1, Math.max(0, r.raw_idx));
+    const prev = lastByIdx.get(idx);
+    if (!prev) {
+      lastByIdx.set(idx, {
+        idx,
+        total: r.total,
+        ok_count: r.ok_count,
+        error_count: r.error_count,
+        avg_sum: (r.avg_ms || 0) * r.total,
+        max_ms: r.max_ms,
+        first_at: r.first_at,
+        last_at: r.last_at,
+      });
+    } else {
+      prev.total += r.total;
+      prev.ok_count += r.ok_count;
+      prev.error_count += r.error_count;
+      prev.avg_sum += (r.avg_ms || 0) * r.total;
+      prev.max_ms = Math.max(prev.max_ms || 0, r.max_ms || 0);
+      prev.first_at = Math.min(prev.first_at, r.first_at);
+      prev.last_at = Math.max(prev.last_at, r.last_at);
+    }
+  }
+  for (const v of lastByIdx.values()) {
+    rows.push({
+      idx: v.idx,
+      total: v.total,
+      ok_count: v.ok_count,
+      error_count: v.error_count,
+      avg_ms: v.total > 0 ? v.avg_sum / v.total : null,
+      max_ms: v.max_ms,
+      first_at: v.first_at,
+      last_at: v.last_at,
+    });
+  }
+  const bucketSize = span / n;
+  const map = new Map(rows.map(r => [r.idx, r]));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const r = map.get(i);
+    const bFrom = Math.round(from + i * bucketSize);
+    const bTo   = Math.round(from + (i + 1) * bucketSize);
+    if (r) {
+      out.push({
+        idx: i,
+        from: bFrom,
+        to: bTo,
+        total:   r.total,
+        ok:      r.ok_count,
+        errors:  r.error_count,
+        has_error: r.error_count > 0,
+        avg_ms:  r.avg_ms !== null ? Math.round(r.avg_ms) : null,
+        max_ms:  r.max_ms,
+        first_at: r.first_at,
+        last_at:  r.last_at,
+      });
+    } else {
+      out.push({
+        idx: i, from: bFrom, to: bTo,
+        total: 0, ok: 0, errors: 0, has_error: false,
+        avg_ms: null, max_ms: null, first_at: null, last_at: null,
+      });
+    }
+  }
+  return out;
+}
+
+function hourlyForRange({ name, from, to }) {
+  if (!from || !to || to <= from) return [];
+  const clauses = ['checked_at >= ?', 'checked_at <= ?'];
+  const params = [from, to];
+  if (name) { clauses.push('name = ?'); params.push(name); }
+  const sql = `
+    SELECT
+      CAST(checked_at / 3600000 AS INTEGER) * 3600000   AS hour_ts,
+      COUNT(*)                                          AS total,
+      SUM(CASE WHEN status = 'ok'  THEN 1 ELSE 0 END)   AS ok_count,
+      SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END)   AS error_count,
+      AVG(time_ms)                                      AS avg_ms,
+      MAX(time_ms)                                      AS max_ms
+    FROM status_logs
+    WHERE ${clauses.join(' AND ')}
+    GROUP BY hour_ts
+    ORDER BY hour_ts DESC
+  `;
+  return db.prepare(sql).all(...params).map(r => ({
+    hour_ts:  r.hour_ts,
+    total:    r.total,
+    ok:       r.ok_count,
+    error:    r.error_count,
+    has_error: r.error_count > 0,
+    avg_ms:   r.avg_ms !== null ? Math.round(r.avg_ms) : null,
+    max_ms:   r.max_ms,
+  }));
+}
+
 const deleteOldStmt = db.prepare(`DELETE FROM status_logs WHERE checked_at < ?`);
 
 function purgeOlderThan(cutoffMs) {
@@ -129,5 +251,7 @@ module.exports = {
   getHistorySince,
   queryLogs,
   statsForRange,
+  bucketsForRange,
+  hourlyForRange,
   purgeOlderThan,
 };

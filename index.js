@@ -7,6 +7,8 @@ const {
   getHistorySince,
   queryLogs,
   statsForRange,
+  bucketsForRange,
+  hourlyForRange,
   purgeOlderThan,
 } = require('./db');
 
@@ -73,7 +75,7 @@ function startScheduler() {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const HISTORY_WINDOW_HOURS = new Set([1, 3, 7]);
+const HISTORY_WINDOW_HOURS = new Set([1, 3, 7, 24]);
 
 app.get('/api/status', (req, res) => {
   let hours = parseInt(req.query.window_hours, 10);
@@ -164,6 +166,31 @@ app.get('/api/logs', (req, res) => {
       timestamp: new Date(r.checked_at).toISOString(),
     })),
   });
+});
+
+app.get('/api/logs/buckets', (req, res) => {
+  const { name, from, to, buckets } = req.query;
+  const toMs   = parseTimeParam(to)   || Date.now();
+  const fromMs = parseTimeParam(from) || (toMs - 24 * 3600_000);
+  const rows = bucketsForRange({
+    name: name || undefined,
+    from: fromMs,
+    to:   toMs,
+    buckets,
+  });
+  res.json({ from: fromMs, to: toMs, buckets: rows });
+});
+
+app.get('/api/logs/hourly', (req, res) => {
+  const { name, from, to } = req.query;
+  const toMs   = parseTimeParam(to)   || Date.now();
+  const fromMs = parseTimeParam(from) || (toMs - 24 * 3600_000);
+  const rows = hourlyForRange({
+    name: name || undefined,
+    from: fromMs,
+    to:   toMs,
+  });
+  res.json({ from: fromMs, to: toMs, items: rows });
 });
 
 app.listen(port, () => {
