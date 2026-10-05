@@ -55,6 +55,10 @@ API_URLS=https://api.example.com/health,https://db.example.com/ping
 # Comma-separated display names matching API_URLS order.
 # If a name is missing, "API-<n>" is used.
 API_NAMES=App-Hub,App-DB
+
+# Lark custom bot webhook. An alert is sent once when an endpoint fails
+# 2 consecutive checks (retries with backoff on rate limit). Optional.
+LARK_WEBHOOK_LINK=https://open.larksuite.com/open-apis/bot/v2/hook/<token>
 ```
 
 The SQLite file is created at `data/status.db` on first run.

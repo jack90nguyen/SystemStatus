@@ -11,6 +11,7 @@ const {
   hourlyForRange,
   purgeOlderThan,
 } = require('./db');
+const { sendLarkText } = require('./lark');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -57,11 +58,37 @@ async function checkOne(endpoint) {
   }
 }
 
+const ALERT_AFTER_FAILS = 2;
+const failStreak = new Map();
+
+function collectAlerts(results) {
+  const alerts = [];
+  for (const r of results) {
+    const streak = r.status === 'ok' ? 0 : (failStreak.get(r.name) || 0) + 1;
+    failStreak.set(r.name, streak);
+    if (streak === ALERT_AFTER_FAILS) alerts.push(r);
+  }
+  return alerts;
+}
+
+function notifyAlerts(alerts) {
+  if (alerts.length === 0) return;
+  const lines = alerts.map(a => `• ${a.name} — ${a.error} — ${a.url}`);
+  const time = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const text = [
+    `🔴 [SystemStatus] ${alerts.length} server lỗi ${ALERT_AFTER_FAILS} nhịp liên tiếp`,
+    ...lines,
+    `🕒 ${time}`,
+  ].join('\n');
+  sendLarkText(text).catch(err => console.error(err.message));
+}
+
 async function runCheckCycle() {
   const endpoints = getEndpoints();
   if (endpoints.length === 0) return;
   const results = await Promise.all(endpoints.map(checkOne));
   insertLogs(results);
+  notifyAlerts(collectAlerts(results));
   const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   purgeOlderThan(cutoff);
 }
