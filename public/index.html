@@ -177,8 +177,17 @@
             }, 1000);
         };
 
+        // Bar color by uptime tier, so a single failed check doesn't paint the whole bar red.
+        const uptimeColor = (uptime) => {
+            if (uptime >= 1)    return 'bg-green-400';
+            if (uptime >= 0.99) return 'bg-lime-300';
+            if (uptime >= 0.95) return 'bg-yellow-300';
+            if (uptime >= 0.8)  return 'bg-orange-400';
+            return 'bg-red-500';
+        };
+        const fmtUptime = (uptime) => `${(uptime * 100).toFixed(1)}% uptime`;
+
         // Group a chronological history (ASC) into at most `bars` buckets.
-        // A bucket renders red if ANY check inside failed.
         const bucketHistory = (history, bars) => {
             const n = history.length;
             if (n === 0) return [];
@@ -187,7 +196,7 @@
             for (let i = 0; i < n; i += size) {
                 const chunk = history.slice(i, i + size);
                 const errors = chunk.filter(h => h.status !== 'ok').length;
-                const hasError = errors > 0;
+                const uptime = (chunk.length - errors) / chunk.length;
                 const firstTs = new Date(chunk[0].timestamp);
                 const lastTs  = new Date(chunk[chunk.length - 1].timestamp);
                 let tooltip;
@@ -195,11 +204,11 @@
                     tooltip = `${firstTs.toLocaleTimeString()} • ${chunk[0].time} • ${chunk[0].status.toUpperCase()}`;
                 } else {
                     const range = `${firstTs.toLocaleTimeString()}–${lastTs.toLocaleTimeString()}`;
-                    tooltip = hasError
-                        ? `${range} • ${chunk.length} checks • ${errors} error${errors === 1 ? '' : 's'}`
+                    tooltip = errors > 0
+                        ? `${range} • ${chunk.length} checks • ${errors} error${errors === 1 ? '' : 's'} • ${fmtUptime(uptime)}`
                         : `${range} • ${chunk.length} checks • all OK`;
                 }
-                out.push({ hasError, tooltip });
+                out.push({ uptime, tooltip });
             }
             return out;
         };
@@ -237,8 +246,7 @@
                     const MAX_BARS = 60;
                     const buckets = bucketHistory(endpointHistory, MAX_BARS);
                     const historyHtml = buckets.map(b => {
-                        const hColor = b.hasError ? 'bg-red-400' : 'bg-green-400';
-                        return `<div class="w-1.5 h-4 sm:w-2 sm:h-5 rounded-sm ${hColor} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${b.tooltip}"></div>`;
+                        return `<div class="w-1.5 h-4 sm:w-2 sm:h-5 rounded-sm ${uptimeColor(b.uptime)} opacity-80 hover:opacity-100 cursor-help transition-opacity" title="${b.tooltip}"></div>`;
                     }).join('');
 
                     const dbIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-1 text-gray-500 flex-shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>`;
@@ -451,8 +459,9 @@
                     color = 'bg-gray-200';
                     tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • no data`;
                 } else if (b.has_error) {
-                    color = 'bg-red-400';
-                    tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • ${b.total} checks • ${b.errors} error${b.errors === 1 ? '' : 's'}`;
+                    const uptime = b.ok / b.total;
+                    color = uptimeColor(uptime);
+                    tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • ${b.total} checks • ${b.errors} error${b.errors === 1 ? '' : 's'} • ${fmtUptime(uptime)}`;
                 } else {
                     color = 'bg-green-400';
                     tooltip = `${fmtTime(b.from)}–${fmtTime(b.to)} • ${b.total} checks • all OK`;
