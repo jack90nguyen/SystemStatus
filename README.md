@@ -57,7 +57,8 @@ API_URLS=https://api.example.com/health,https://db.example.com/ping
 API_NAMES=App-Hub,App-DB
 
 # Lark custom bot webhook. An alert is sent once when an endpoint fails
-# 2 consecutive checks (retries with backoff on rate limit). Optional.
+# 2 consecutive checks, and a recovery notice when it comes back up
+# (retries with backoff on rate limit). Optional.
 LARK_WEBHOOK_LINK=https://open.larksuite.com/open-apis/bot/v2/hook/<token>
 ```
 

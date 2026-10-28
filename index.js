@@ -59,28 +59,57 @@ async function checkOne(endpoint) {
 }
 
 const ALERT_AFTER_FAILS = 2;
+// name → { count, since }: consecutive failures and the checked_at of the first one.
 const failStreak = new Map();
 
 function collectAlerts(results) {
-  const alerts = [];
+  const down = [];
+  const up = [];
   for (const r of results) {
-    const streak = r.status === 'ok' ? 0 : (failStreak.get(r.name) || 0) + 1;
-    failStreak.set(r.name, streak);
-    if (streak === ALERT_AFTER_FAILS) alerts.push(r);
+    const prev = failStreak.get(r.name);
+    if (r.status === 'ok') {
+      if (prev && prev.count >= ALERT_AFTER_FAILS) {
+        up.push({ ...r, downMs: r.checked_at - prev.since });
+      }
+      failStreak.delete(r.name);
+      continue;
+    }
+    const count = (prev?.count || 0) + 1;
+    failStreak.set(r.name, { count, since: prev?.since ?? r.checked_at });
+    if (count === ALERT_AFTER_FAILS) down.push(r);
   }
-  return alerts;
+  return { down, up };
 }
 
-function notifyAlerts(alerts) {
-  if (alerts.length === 0) return;
-  const lines = alerts.map(a => `• ${a.name} — ${a.error} — ${a.url}`);
+function formatDuration(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function sendNotice(title, lines) {
   const time = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-  const text = [
-    `🔴 [SystemStatus] ${alerts.length} server lỗi ${ALERT_AFTER_FAILS} nhịp liên tiếp`,
-    ...lines,
-    `🕒 ${time}`,
-  ].join('\n');
+  const text = [title, ...lines, `🕒 ${time}`].join('\n');
   sendLarkText(text).catch(err => console.error(err.message));
+}
+
+function notifyAlerts({ down, up }) {
+  if (down.length > 0) {
+    sendNotice(
+      `🔴 ${down.length} server lỗi ${ALERT_AFTER_FAILS} nhịp liên tiếp`,
+      down.map(a => `• ${a.name} — ${a.error} — ${a.url}`),
+    );
+  }
+  if (up.length > 0) {
+    sendNotice(
+      `🟢 ${up.length} server đã hoạt động lại`,
+      up.map(a => `• ${a.name} — down ${formatDuration(a.downMs)} — ${a.url}`),
+    );
+  }
 }
 
 async function runCheckCycle() {
