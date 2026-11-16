@@ -1,14 +1,14 @@
 const path = require('path');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite');
 
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-const db = new Database(path.join(DATA_DIR, 'status.db'));
-db.pragma('journal_mode = WAL');
+const db = new DatabaseSync(path.join(DATA_DIR, 'status.db'));
+db.exec('PRAGMA journal_mode = WAL');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS status_logs (
@@ -29,13 +29,16 @@ const insertStmt = db.prepare(`
   VALUES (@name, @url, @status, @time_ms, @error, @checked_at)
 `);
 
-const insertManyTx = db.transaction((rows) => {
-  for (const row of rows) insertStmt.run(row);
-});
-
 function insertLogs(rows) {
   if (!rows || rows.length === 0) return;
-  insertManyTx(rows);
+  db.exec('BEGIN');
+  try {
+    for (const row of rows) insertStmt.run(row);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 const latestPerNameStmt = db.prepare(`

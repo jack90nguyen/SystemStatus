@@ -15,13 +15,13 @@ Lightweight uptime monitor for HTTP endpoints. Periodically pings a configurable
 ## Tech Stack
 
 - Node.js + Express 5
-- `better-sqlite3` for storage
+- Built-in `node:sqlite` for storage (no native dependencies)
 - Tailwind (CDN) for the UI
 - PWA: `public/manifest.json` + `public/sw.js`
 
 ## Requirements
 
-- Node.js 18+ (uses global `fetch` and `performance`).
+- Node.js 22.13+ (uses built-in `node:sqlite`, global `fetch` and `performance`). Production runs Node 24.
 - npm.
 
 ## Installation
@@ -99,36 +99,38 @@ Open <http://localhost:3000>.
 
 ## Deploy
 
+Production runs on the `monitor` host (CentOS 7, glibc 2.17) behind the ALB at <https://status.hbcommerce.co>, path `/home/centos/system-status`, port `3435`.
+
+The system Node on that host is v14 (used by another app), so this app runs on a separate Node 24 build for glibc 2.17 at `~/.local/node24` (from `unofficial-builds.nodejs.org`). Never upgrade the system Node there.
+
 ### 1. Sync code to the server
 
 Push everything except local-only files. `.env` is sent separately so it doesn't override the server's config by accident.
 
 ```bash
-rsync -avhrzu --exclude={.env,.git,node_modules,data} ./ sandbox:/home/ec2-user/system-status/
-rsync -vh .env sandbox:/home/ec2-user/system-status/.env
+rsync -avhrzu --exclude={.env,.git,node_modules,data} ./ monitor:/home/centos/system-status/
+rsync -vh .env monitor:/home/centos/system-status/.env
 ```
 
-Then install dependencies on the server:
+Then install dependencies on the server with Node 24's npm:
 
 ```bash
-ssh sandbox
-cd /home/ec2-user/system-status
-npm install --production
+ssh monitor 'cd /home/centos/system-status && PATH=~/.local/node24/bin:$PATH npm install --omit=dev'
 ```
 
 ### 2. Setup PM2
 
 ```bash
-ssh sandbox
+ssh monitor
+cd /home/centos/system-status
 
-# Start under PM2 (uses "npm start" → node index.js)
-pm2 start npm --name "system-status" -- start
+# Start under PM2 with the Node 24 interpreter (cwd must be the app dir so .env is loaded)
+pm2 start index.js --name system-status \
+  --interpreter ~/.local/node24/bin/node \
+  --node-args="--disable-warning=ExperimentalWarning"
 
-# Apply latest .env changes
+# Apply latest .env changes / code updates
 pm2 restart system-status --update-env
-
-# Zero-downtime reload after a code update
-pm2 reload system-status
 
 # Stop / start / inspect
 pm2 stop system-status
@@ -145,8 +147,8 @@ A typical update flow after the initial setup is:
 
 ```bash
 # from your machine
-rsync -avhrzu --exclude={.env,.git,node_modules,data} ./ sandbox:/home/ec2-user/system-status/
+rsync -avhrzu --exclude={.env,.git,node_modules,data} ./ monitor:/home/centos/system-status/
 
 # on the server
-ssh sandbox 'cd /home/ec2-user/system-status && npm install --production && pm2 reload system-status'
+ssh monitor 'cd /home/centos/system-status && PATH=~/.local/node24/bin:$PATH npm install --omit=dev && pm2 restart system-status --update-env'
 ```
