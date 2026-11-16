@@ -60,6 +60,12 @@ API_NAMES=App-Hub,App-DB
 # 2 consecutive checks, and a recovery notice when it comes back up
 # (retries with backoff on rate limit). Optional.
 LARK_WEBHOOK_LINK=https://open.larksuite.com/open-apis/bot/v2/hook/<token>
+
+# Heartbeat (push) monitors for tools without a URL, e.g. cron workers.
+# Comma-separated names, must not clash with API_NAMES. Optional.
+HEARTBEAT_NAMES=Cron-Spy,Cron-Report
+# Shared secret the tools send when pinging. Generate with: openssl rand -hex 32
+HEARTBEAT_TOKEN=<random-hex>
 ```
 
 The SQLite file is created at `data/status.db` on first run.
@@ -82,8 +88,23 @@ Open <http://localhost:3000>.
 | GET    | `/api/logs/stats`   | `name`, `from`, `to`                                    | Aggregate stats (total, ok, error, uptime, avg/min/max latency).     |
 | GET    | `/api/logs/buckets` | `name`, `from`, `to`, `buckets` (default 120, max 500)  | Time-bucketed series across the whole range. Used by the popup chart.|
 | GET    | `/api/logs/hourly`  | `name`, `from`, `to`                                    | Per-hour aggregates. Used by the popup log list.                     |
+| GET/POST | `/api/heartbeat/:name` | `token` (or `Authorization: Bearer <token>`)        | Heartbeat ping from a tool listed in `HEARTBEAT_NAMES`. See below.   |
 
 `from` / `to` accept either a Unix millisecond timestamp or an ISO date string.
+
+## Heartbeat Monitors
+
+For tools that have no URL to poll (cron workers, background jobs), the tool pings the app instead:
+
+```bash
+curl -fsS "https://status.hbcommerce.co/api/heartbeat/Cron-Spy?token=<HEARTBEAT_TOKEN>"
+```
+
+- Ping every 30s. Each check cycle marks a heartbeat `error` when its last ping is older than 1.5 × `CHECK_INTERVAL_MS` (45s by default).
+- Results go into the same logs as polled endpoints, so the dashboard, history, and Lark alerts (🔴 after 2 failed checks, 🟢 on recovery) work the same way. A dead tool is reported roughly 75–105s after its last ping.
+- Responses: `200` ok, `403` bad or missing token, `404` name not in `HEARTBEAT_NAMES`.
+- Last ping times are kept in memory. After a restart the boot time counts as the last ping, so heartbeats aren't flagged during the first 45s.
+- A heartbeat only proves the process is alive. To catch stuck jobs, ping at the end of each successful job run instead of from a separate timer.
 
 ## Project Structure
 

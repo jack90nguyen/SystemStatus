@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const {
   insertLogs,
   getLatestPerName,
@@ -26,6 +27,32 @@ function getEndpoints() {
   const names = (process.env.API_NAMES || '')
     .split(',').map(s => s.trim());
   return urls.map((url, i) => ({ name: names[i] || `API-${i + 1}`, url }));
+}
+
+// Push monitors: tools without a URL ping /api/heartbeat/:name instead of being polled.
+const HEARTBEAT_GRACE_MS = CHECK_INTERVAL_MS * 1.5;
+
+function getHeartbeats() {
+  return (process.env.HEARTBEAT_NAMES || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// name → last ping time. Falls back to boot time so a restart doesn't flag every heartbeat.
+const lastPing = new Map();
+const bootedAt = Date.now();
+
+function checkHeartbeat(name) {
+  const now = Date.now();
+  const age = now - (lastPing.get(name) ?? bootedAt);
+  const ok = age <= HEARTBEAT_GRACE_MS;
+  return {
+    name,
+    url: 'heartbeat',
+    status: ok ? 'ok' : 'error',
+    time_ms: 0,
+    error: ok ? null : `No heartbeat for ${formatDuration(age)}`,
+    checked_at: now,
+  };
 }
 
 async function checkOne(endpoint) {
@@ -114,8 +141,12 @@ function notifyAlerts({ down, up }) {
 
 async function runCheckCycle() {
   const endpoints = getEndpoints();
-  if (endpoints.length === 0) return;
-  const results = await Promise.all(endpoints.map(checkOne));
+  const heartbeats = getHeartbeats();
+  if (endpoints.length === 0 && heartbeats.length === 0) return;
+  const results = [
+    ...await Promise.all(endpoints.map(checkOne)),
+    ...heartbeats.map(checkHeartbeat),
+  ];
   insertLogs(results);
   notifyAlerts(collectAlerts(results));
   const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -138,14 +169,14 @@ app.get('/api/status', (req, res) => {
   if (!HISTORY_WINDOW_HOURS.has(hours)) hours = 1;
   const sinceMs = Date.now() - hours * 60 * 60 * 1000;
 
-  const endpoints = getEndpoints();
+  const names = [...getEndpoints().map(ep => ep.name), ...getHeartbeats()];
   const latestMap = new Map(getLatestPerName().map(r => [r.name, r]));
 
-  const data = endpoints.map(ep => {
-    const latest = latestMap.get(ep.name);
-    const history = getHistorySince(ep.name, sinceMs);
+  const data = names.map(name => {
+    const latest = latestMap.get(name);
+    const history = getHistorySince(name, sinceMs);
     return {
-      name: ep.name,
+      name,
       status: latest ? latest.status : 'unknown',
       time: latest ? `${latest.time_ms}ms` : '-',
       checked_at: latest ? latest.checked_at : null,
@@ -164,6 +195,26 @@ app.get('/api/status', (req, res) => {
     items: data,
   });
 });
+
+function isValidToken(req) {
+  const expected = process.env.HEARTBEAT_TOKEN;
+  if (!expected) return false;
+  const auth = req.get('authorization') || '';
+  const given = Buffer.from(String(req.query.token || (auth.startsWith('Bearer ') ? auth.slice(7) : '')));
+  const want = Buffer.from(expected);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+
+function handleHeartbeat(req, res) {
+  if (!isValidToken(req)) return res.status(403).json({ error: 'Invalid token' });
+  const { name } = req.params;
+  if (!getHeartbeats().includes(name)) return res.status(404).json({ error: 'Unknown heartbeat' });
+  lastPing.set(name, Date.now());
+  res.json({ ok: true, name });
+}
+
+app.get('/api/heartbeat/:name', handleHeartbeat);
+app.post('/api/heartbeat/:name', handleHeartbeat);
 
 const parseTimeParam = (v) => {
   if (!v) return undefined;
